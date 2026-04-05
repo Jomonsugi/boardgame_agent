@@ -312,7 +312,12 @@ def main() -> None:
                 status_container = st.status("Thinking...", expanded=False)
 
                 def _on_tool_start(tool_name: str, args: dict) -> None:
-                    if tool_name == "search_rulebook":
+                    if tool_name == "_planner":
+                        plan = args.get("plan")
+                        if plan:
+                            status_container.update(label="Checking conversation context...")
+                        # else: no status update needed, move straight to searching
+                    elif tool_name == "search_rulebook":
                         source = args.get("source", "all")
                         label = f"Searching documents ({source})..." if source != "all" else "Searching documents..."
                         status_container.update(label=label)
@@ -320,6 +325,10 @@ def main() -> None:
                         status_container.update(label="Searching the web...")
                     elif tool_name == "get_past_answers":
                         status_container.update(label="Checking past answers...")
+                    elif tool_name == "lookup_glossary":
+                        status_container.update(label="Looking up icon glossary...")
+                    elif tool_name == "view_page":
+                        status_container.update(label="Analyzing page visually...")
                     elif tool_name == "submit_answer":
                         status_container.update(label="Preparing answer...")
 

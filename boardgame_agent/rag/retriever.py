@@ -3,6 +3,9 @@
 Uses Qdrant's native prefetch + RRF fusion to combine:
   - Dense search  (Ollama qwen3-embedding) — semantic similarity
   - Sparse search (SPLADE++) — exact term matching
+
+After RRF fusion, results are optionally re-ranked with a cross-encoder
+(Cohere API or local FastEmbed model) for higher precision.
 """
 
 from __future__ import annotations
@@ -11,8 +14,70 @@ from typing import Any
 
 from qdrant_client import QdrantClient, models
 
-from boardgame_agent.config import COLLECTION_NAME, RETRIEVAL_TOP_K as _DEFAULT_K
+from boardgame_agent.config import (
+    COLLECTION_NAME,
+    COHERE_API_KEY,
+    COHERE_RERANK_MODEL,
+    FASTEMBED_RERANK_MODEL,
+    RERANK_PROVIDER,
+    RETRIEVAL_TOP_K as _DEFAULT_K,
+)
 from boardgame_agent.rag.indexer import embed_dense_single, embed_sparse
+
+
+_cohere_client = None
+_fastembed_reranker = None
+
+
+def _rerank_cohere(query: str, points: list[Any], top_k: int) -> list[Any]:
+    """Re-rank using Cohere Rerank API (free tier: 1k calls/month)."""
+    global _cohere_client
+    if _cohere_client is None:
+        import cohere
+        _cohere_client = cohere.ClientV2(api_key=COHERE_API_KEY)
+
+    if not points:
+        return points
+
+    documents = [p.payload.get("text", "") for p in points]
+    response = _cohere_client.rerank(
+        model=COHERE_RERANK_MODEL,
+        query=query,
+        documents=documents,
+        top_n=top_k,
+    )
+    return [points[r.index] for r in response.results]
+
+
+def _rerank_fastembed(query: str, points: list[Any], top_k: int) -> list[Any]:
+    """Re-rank using a local FastEmbed cross-encoder model."""
+    global _fastembed_reranker
+    if _fastembed_reranker is None:
+        from fastembed.rerank.cross_encoder import TextCrossEncoder
+        _fastembed_reranker = TextCrossEncoder(model_name=FASTEMBED_RERANK_MODEL)
+
+    if not points:
+        return points
+
+    documents = [p.payload.get("text", "") for p in points]
+    results = list(_fastembed_reranker.rerank(query, documents, top_k=top_k))
+    return [points[r["index"]] for r in results]
+
+
+def _rerank(query: str, points: list[Any], top_k: int) -> list[Any]:
+    """Re-rank points using the configured provider. Falls back gracefully."""
+    if RERANK_PROVIDER == "none" or not points:
+        return points[:top_k]
+    try:
+        if RERANK_PROVIDER == "cohere":
+            if not COHERE_API_KEY:
+                return points[:top_k]
+            return _rerank_cohere(query, points, top_k)
+        elif RERANK_PROVIDER == "fastembed":
+            return _rerank_fastembed(query, points, top_k)
+    except Exception as e:
+        print(f"  Re-ranking failed ({RERANK_PROVIDER}): {e} — using RRF order")
+    return points[:top_k]
 
 
 def retrieve_pages(
@@ -27,7 +92,8 @@ def retrieve_pages(
     Optionally filter by *doc_tag* (e.g. ``"rulebook"``, ``"faq"``).
     Pass ``None`` to search all documents for the game.
 
-    Runs two prefetch branches (dense + sparse) and fuses with RRF server-side.
+    Pipeline: RRF fusion (dense + sparse, 4×k candidates) → cross-encoder
+    re-ranking → final top k.
     """
     conditions = [
         models.FieldCondition(
@@ -44,7 +110,8 @@ def retrieve_pages(
         )
     game_filter = models.Filter(must=conditions)
 
-    # Prefetch pool is larger than final k so RRF has enough candidates.
+    # Prefetch pool is larger than final k so RRF has enough candidates
+    # and the re-ranker has a meaningful pool to work with.
     prefetch_limit = k * 4
 
     dense_emb = embed_dense_single(query)
@@ -67,10 +134,11 @@ def retrieve_pages(
             ),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
-        limit=k,
+        limit=prefetch_limit,  # Get full candidate pool for re-ranking
         with_payload=True,
     )
-    return response.points
+
+    return _rerank(query, response.points, k)
 
 
 def format_pages_for_llm(points: list[Any]) -> str:

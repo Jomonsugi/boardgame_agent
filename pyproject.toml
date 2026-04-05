@@ -28,6 +28,13 @@ dependencies = [
     "docling>=2.40.0",
     "pymupdf>=1.24.0",
 
+    # Re-ranking (Cohere API — free tier; FastEmbed local fallback already included)
+    "cohere>=5.0.0",
+
+    # Glossary (icon extraction & matching)
+    "imagehash>=4.3.0",
+    "open-clip-torch>=2.24.0",
+
     # Web search (optional but listed — gate on API key at runtime)
     "tavily-python>=0.5.0",
 

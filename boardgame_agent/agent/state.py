@@ -15,3 +15,5 @@ class AgentState(TypedDict):
     game_name: str
     # Populated after the formatting step; holds QAWithCitations as a plain dict.
     final_answer: Optional[dict[str, Any]]
+    # Set by the planner node when the answer is already in conversation context.
+    plan: Optional[list[str]]

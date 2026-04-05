@@ -28,3 +28,9 @@ class QAWithCitations(BaseModel):
         default=[],
         description="Web sources used, each with a URL and a summary of what was found.",
     )
+    confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Agent's self-assessed confidence (0-1). Low values flag answers for user review.",
+    )

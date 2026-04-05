@@ -24,10 +24,12 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from boardgame_agent.config import DATA_DIR
 
-# Custom prompt tuned for board game rulebook icons and symbols.
+# VLM prompt for picture descriptions at extraction time.
+# Deliberately asks for ONLY visual description — no interpretation of meaning.
+# Meaning is resolved later by the glossary builder with full context.
 _VLM_PROMPT = (
-    "Describe what icons, symbols, numbers, or game components are shown "
-    "in this image. Be concise (1-2 sentences)."
+    "Describe exactly what you see: shapes, colors, numbers, and any text. "
+    "Do not guess what it means or represents. One sentence."
 )
 
 
@@ -389,6 +391,59 @@ def chunk_by_sections(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         for bbox_indices in merged:
             _emit(bbox_indices, page, bboxes)
+
+    return chunks
+
+
+def enrich_chunks_with_glossary(
+    chunks: list[dict[str, Any]],
+    glossary_entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Append resolved icon meanings to chunk text using DHash matching.
+
+    For each chunk, checks its picture bboxes against glossary entries
+    by DHash similarity. Appends matched meanings to the chunk text so
+    they become searchable via the vector index.
+
+    Idempotent: skips chunks that already have ``[Icons:`` annotations.
+    """
+    if not glossary_entries:
+        return chunks
+
+    # Build a hash → entry lookup.
+    from boardgame_agent.glossary.image_utils import hamming_distance
+    from boardgame_agent.config import ICON_HASH_FUZZY_THRESHOLD
+
+    for chunk in chunks:
+        if "[Icons:" in chunk.get("text", ""):
+            continue  # Already enriched.
+
+        bboxes = chunk.get("bboxes", [])
+        matched: list[str] = []
+
+        for bbox in bboxes:
+            if bbox.get("label") != "picture":
+                continue
+            # We need the DHash of this bbox. Since we don't store it on
+            # the bbox directly, we match by doc_name + page_num + bbox_index.
+            chunk_doc = chunk.get("doc_name", "")
+            chunk_page = chunk.get("page_num", 0)
+            orig_indices = chunk.get("original_bbox_indices", [])
+
+            for entry in glossary_entries:
+                for occ in entry.get("occurrences", []):
+                    if (
+                        occ.get("doc_name") == chunk_doc
+                        and occ.get("page_num") == chunk_page
+                        and occ.get("bbox_index") in orig_indices
+                    ):
+                        label = f"{entry['name']} = {entry['meaning']}"
+                        if label not in matched:
+                            matched.append(label)
+
+        if matched:
+            annotation = "\n\n[Icons: " + "; ".join(matched) + "]"
+            chunk["text"] += annotation
 
     return chunks
 

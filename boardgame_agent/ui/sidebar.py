@@ -223,6 +223,41 @@ def render_sidebar() -> tuple[str | None, str | None, str, int, bool]:
         else:
             st.caption("No documents indexed yet.")
 
+        # ── Icon Glossary ─────────────────────────────────────────────────
+        st.subheader("Icon Glossary")
+        glossary_path = DATA_DIR / "games" / selected_game_id / "glossary.json"
+        if glossary_path.exists():
+            import json as _json
+            gdata = _json.loads(glossary_path.read_text(encoding="utf-8"))
+            n_entries = len(gdata.get("entries", []))
+            n_unresolved = len(gdata.get("unresolved", []))
+            st.caption(f"{n_entries} icons resolved, {n_unresolved} unresolved")
+            with st.expander("View glossary entries"):
+                for entry in gdata.get("entries", [])[:30]:
+                    conf = entry.get("confidence", 1.0)
+                    conf_label = f" ({conf:.0%})" if conf < 1.0 else ""
+                    st.markdown(f"**{entry['name']}**{conf_label}: {entry['meaning']}")
+            col_rebuild, col_reindex = st.columns(2)
+            if col_rebuild.button("Rebuild glossary", key="rebuild_glossary"):
+                _build_glossary_ui(selected_game_id)
+                _invalidate_agent_cache()
+                st.rerun()
+            if col_reindex.button("Reindex with glossary", key="reindex_glossary",
+                                  help="Re-embed all documents with icon meanings injected into chunk text."):
+                with st.spinner("Reindexing documents with glossary enrichment..."):
+                    reindex_all()
+                _invalidate_agent_cache()
+                st.success("Reindex complete.")
+                st.rerun()
+        else:
+            st.caption("No glossary built yet.")
+            if docs and st.button("Build Icon Glossary", key="build_glossary", type="primary"):
+                _build_glossary_ui(selected_game_id)
+                _invalidate_agent_cache()
+                st.rerun()
+
+        st.divider()
+
         # Upload new documents
         uploaded = st.file_uploader(
             "Add document(s)",
@@ -237,9 +272,12 @@ def render_sidebar() -> tuple[str | None, str | None, str, int, bool]:
             for uf in uploaded:
                 col_name, col_tag, col_spread = st.columns([3, 2, 1])
                 col_name.write(f"📄 {uf.name}")
+
+                # Auto-suggest tag from filename keywords.
+                suggested_tag = _suggest_doc_tag(uf.name)
                 file_tags[uf.name] = col_tag.text_input(
                     "tag",
-                    value="rulebook",
+                    value=suggested_tag,
                     key=f"upload_tag_{uf.name}",
                     label_visibility="collapsed",
                     placeholder="rulebook",
@@ -249,12 +287,38 @@ def render_sidebar() -> tuple[str | None, str | None, str, int, bool]:
                     key=f"upload_spread_{uf.name}",
                     help="Check if this PDF has two-page spreads.",
                 )
+
+            # Processing options — on by default, user can uncheck.
+            has_pdfs = any(Path(uf.name).suffix.lower() == ".pdf" for uf in uploaded)
+            enrich_pictures = False
+            build_glossary_after = False
+            if has_pdfs:
+                enrich_pictures = st.checkbox(
+                    "Enrich pictures with VLM descriptions",
+                    value=True,
+                    key="upload_enrich_pictures",
+                    help="Uses a vision model to describe icons and images during extraction. Recommended for games with icons.",
+                )
+                build_glossary_after = st.checkbox(
+                    "Build icon glossary after indexing",
+                    value=True,
+                    key="upload_build_glossary",
+                    help="Automatically builds an icon glossary from all documents. Recommended for games with icon-heavy pages.",
+                )
+
             if st.button(
                 f"Index to **{selected_game_name}**",
                 key="index_pdfs_btn",
                 type="primary",
             ):
-                _index_uploaded_docs(selected_game_id, uploaded, file_tags, file_spreads)
+                vlm_preset = VLM_DEFAULT_PRESET if enrich_pictures else None
+                _index_uploaded_docs(
+                    selected_game_id, uploaded, file_tags, file_spreads,
+                    vlm_preset=vlm_preset,
+                )
+                if build_glossary_after:
+                    _build_glossary_ui(selected_game_id)
+                    _invalidate_agent_cache()
                 st.rerun()
 
         # Folder path shortcut (useful for local use)
@@ -320,10 +384,20 @@ def _copy_doc_to_store(game_id: str, src_path: Path, doc_name: str) -> Path:
     return dest
 
 
-def _index_single_doc(game_id: str, doc_path: Path, doc_name: str, doc_tag: str = "rulebook", has_spreads: bool = False) -> None:
+def _index_single_doc(
+    game_id: str,
+    doc_path: Path,
+    doc_name: str,
+    doc_tag: str = "rulebook",
+    has_spreads: bool = False,
+    vlm_preset: str | None = None,
+) -> None:
     """Extract, chunk, embed, and register a single document (PDF or markdown)."""
     stored_path = _copy_doc_to_store(game_id, doc_path, doc_name)
-    pages = get_or_extract(stored_path, game_id, doc_name, has_spreads=has_spreads)
+    pages = get_or_extract(
+        stored_path, game_id, doc_name,
+        has_spreads=has_spreads, vlm_preset=vlm_preset,
+    )
     print(f"  {doc_name}: {len(pages)} pages/sections extracted")
     # Inject doc_tag into page dicts so it flows into the Qdrant payload.
     for page in pages:
@@ -334,6 +408,8 @@ def _index_single_doc(game_id: str, doc_path: Path, doc_name: str, doc_tag: str 
     print(f"  {doc_name}: indexing complete")
     cache_path = DATA_DIR / "games" / game_id / "extracted" / f"{doc_name}.json"
     register_document(game_id, doc_name, stored_path, cache_path, doc_tag=doc_tag)
+    if vlm_preset:
+        update_vlm_enrichment(game_id, doc_name, vlm_preset)
 
 
 def _index_uploaded_docs(
@@ -341,11 +417,13 @@ def _index_uploaded_docs(
     uploaded_files,
     file_tags: dict[str, str],
     file_spreads: dict[str, bool] | None = None,
+    vlm_preset: str | None = None,
 ) -> None:
     """Index uploaded files with per-file tags.
 
     *file_tags* maps filename → tag (e.g. ``{"rules.pdf": "rulebook", "faq.md": "faq"}``).
     *file_spreads* maps filename → bool for spread-page PDFs.
+    *vlm_preset* enables VLM picture enrichment during extraction for PDFs.
     """
     import tempfile, os
 
@@ -356,12 +434,17 @@ def _index_uploaded_docs(
         ext = Path(uf.name).suffix.lower()
         tag = file_tags.get(uf.name, "rulebook")
         spreads = file_spreads.get(uf.name, False)
+        # Only apply VLM to PDFs, not markdown.
+        doc_vlm = vlm_preset if ext == ".pdf" else None
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
             tmp.write(uf.read())
             tmp_path = Path(tmp.name)
         try:
             with st.spinner(f"Processing {uf.name}…"):
-                _index_single_doc(game_id, tmp_path, doc_name, tag, has_spreads=spreads)
+                _index_single_doc(
+                    game_id, tmp_path, doc_name, tag,
+                    has_spreads=spreads, vlm_preset=doc_vlm,
+                )
         finally:
             os.unlink(tmp_path)
         progress.progress((i + 1) / len(uploaded_files), text=f"Indexed {uf.name}")
@@ -413,6 +496,50 @@ def _reindex_after_enrichment(game_id: str, doc_name: str, doc_tag: str) -> None
         page["doc_tag"] = doc_tag
     chunks = chunk_by_sections(pages)
     build_index(chunks)
+
+
+def _invalidate_agent_cache() -> None:
+    """Clear the cached agent so it rebuilds with updated tools/glossary."""
+    try:
+        from boardgame_agent.app import get_agent
+        get_agent.clear()
+    except Exception:
+        pass  # Cache may not exist yet on first run.
+
+
+def _build_glossary_ui(game_id: str) -> None:
+    """Run the glossary builder with a Streamlit progress display."""
+    from boardgame_agent.glossary.builder import build_glossary
+
+    status = st.status("Building icon glossary...", expanded=True)
+    def on_progress(msg: str):
+        status.write(msg)
+
+    try:
+        glossary = build_glossary(game_id, on_progress=on_progress)
+        n = len(glossary.entries)
+        u = len(glossary.unresolved)
+        status.update(label=f"Glossary built: {n} icons, {u} unresolved", state="complete")
+    except Exception as e:
+        status.update(label=f"Glossary build failed: {e}", state="error")
+
+
+def _suggest_doc_tag(text: str) -> str:
+    """Suggest a doc_tag based on keywords in a filename or page text.
+
+    Handles obvious cases (icon references, FAQs, player aids). For ambiguous
+    documents, defaults to 'rulebook' — the user can always adjust before indexing.
+    """
+    text = text.lower().replace("-", " ").replace("_", " ")
+    if any(kw in text for kw in ("icon overview", "icon reference", "symbol reference", "symbol glossary")):
+        return "icon_reference"
+    if any(kw in text for kw in ("faq", "frequently asked", "errata", "clarification")):
+        return "faq"
+    if any(kw in text for kw in ("quick reference", "player aid", "reference card", "cheat sheet", "player_aid")):
+        return "quick_reference"
+    if any(kw in text for kw in ("appendix", "glossary")):
+        return "supplement"
+    return "rulebook"
 
 
 def _remove_document(game_id: str, doc_name: str) -> None:

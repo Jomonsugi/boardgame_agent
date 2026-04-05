@@ -20,6 +20,8 @@ from .rag import make_rag_tool
 from .web_search import make_web_search_tool
 from .history import make_history_tool
 from .submit_answer import make_submit_answer_tool
+from .glossary import make_glossary_tool
+from .page_vision import make_page_vision_tool
 
 
 def make_all_tools(
@@ -29,6 +31,7 @@ def make_all_tools(
     config: dict[str, Any],
     db_path: Path = GAMES_DB_PATH,
     enable_web_search: bool = True,
+    enable_glossary: bool = False,
 ) -> list[BaseTool]:
     """Return the complete list of tools available to the agent.
 
@@ -39,7 +42,10 @@ def make_all_tools(
         make_rag_tool(game_id, qdrant_client, config, db_path=db_path),
         make_history_tool(game_id, db_path),
         make_submit_answer_tool(),
+        make_page_vision_tool(game_id),
     ]
+    if enable_glossary:
+        tools.append(make_glossary_tool(game_id))
     if enable_web_search:
         tools.append(make_web_search_tool(game_id, db_path, config=config))
     return tools

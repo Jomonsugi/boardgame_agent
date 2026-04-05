@@ -25,6 +25,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from qdrant_client import QdrantClient
 
+from boardgame_agent.agent.planner import classify_and_plan
 from boardgame_agent.agent.prompts import build_system_prompt
 from boardgame_agent.agent.schemas import QAWithCitations
 from boardgame_agent.agent.state import AgentState
@@ -32,6 +33,7 @@ from boardgame_agent.agent.tools import make_all_tools
 from boardgame_agent.config import (
     ANTHROPIC_API_KEY,
     CHECKPOINTS_DB_PATH,
+    DATA_DIR,
     DEFAULT_MODEL,
     GAMES_DB_PATH,
     MODEL_OPTIONS,
@@ -68,6 +70,11 @@ def _build_llm(model_name: str):
         return ChatTogether(model=model_name, together_api_key=key, temperature=0)
 
 
+def _has_glossary(game_id: str) -> bool:
+    """Check whether a built glossary exists for this game."""
+    return (DATA_DIR / "games" / game_id / "glossary.json").exists()
+
+
 def build_agent(
     game_id: str,
     game_name: str,
@@ -84,16 +91,18 @@ def build_agent(
     from boardgame_agent.db.games import get_documents
 
     qdrant_client = get_qdrant_client()
+    glossary_exists = _has_glossary(game_id)
     agent_config: dict = {"top_k": RETRIEVAL_TOP_K}
     tools = make_all_tools(
         game_id, game_name, qdrant_client, agent_config, GAMES_DB_PATH,
         enable_web_search=enable_web_search,
+        enable_glossary=glossary_exists,
     )
 
     llm = _build_llm(model_name)
     llm_with_tools = llm.bind_tools(tools)
 
-    def _build_system_message() -> SystemMessage:
+    def _build_system_message(plan: list[str] | None = None) -> SystemMessage:
         """Build the system prompt fresh from the database each call."""
         docs = get_documents(game_id, GAMES_DB_PATH)
         doc_tuples = [
@@ -101,10 +110,20 @@ def build_agent(
             for d in docs
         ]
         return SystemMessage(
-            content=build_system_prompt(game_name, documents=doc_tuples, web_search_enabled=enable_web_search)
+            content=build_system_prompt(
+                game_name,
+                documents=doc_tuples,
+                web_search_enabled=enable_web_search,
+                has_glossary=glossary_exists,
+                plan=plan,
+            )
         )
 
     # ── Nodes ─────────────────────────────────────────────────────────────────
+
+    def planner(state: AgentState) -> dict:
+        """Check if the answer is already in conversation context."""
+        return classify_and_plan(state, llm, has_glossary=glossary_exists)
 
     def call_agent(state: AgentState) -> dict:
         all_messages = list(state["messages"])
@@ -130,7 +149,8 @@ def build_agent(
             else:
                 compressed.append(m)
 
-        response = llm_with_tools.invoke([_build_system_message()] + compressed)
+        plan = state.get("plan")
+        response = llm_with_tools.invoke([_build_system_message(plan=plan)] + compressed)
         return {"messages": [response]}
 
     tool_node = ToolNode(tools)
@@ -186,11 +206,13 @@ def build_agent(
     # ── Graph ─────────────────────────────────────────────────────────────────
 
     graph = StateGraph(AgentState)
+    graph.add_node("planner", planner)
     graph.add_node("agent", call_agent)
     graph.add_node("tools", tool_node)
     graph.add_node("finalize", finalize)
 
-    graph.set_entry_point("agent")
+    graph.set_entry_point("planner")
+    graph.add_edge("planner", "agent")
     graph.add_conditional_edges(
         "agent",
         should_continue,
@@ -218,13 +240,14 @@ def _make_input(game_id: str, query: str) -> dict:
         "game_id": game_id,
         "game_name": "",
         "final_answer": None,
+        "plan": None,
     }
 
 
 def _make_config(thread_id: str | None) -> dict:
     return {
         "configurable": {"thread_id": thread_id or str(uuid.uuid4())},
-        "recursion_limit": 25,
+        "recursion_limit": 15,
     }
 
 
@@ -264,6 +287,11 @@ def run_query_stream(
         stream_mode="updates",
     ):
         for node_name, update in chunk.items():
+            # When the planner node runs, notify the callback
+            if node_name == "planner" and on_tool_start:
+                plan = update.get("plan")
+                on_tool_start("_planner", {"plan": plan})
+
             # When the agent node emits tool calls, notify the callback
             if node_name == "agent" and on_tool_start:
                 for msg in update.get("messages", []):

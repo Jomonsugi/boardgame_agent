@@ -28,7 +28,7 @@ from boardgame_agent.config import (
     QDRANT_PATH,
     SPARSE_EMBED_MODEL,
 )
-from boardgame_agent.rag.extractor import chunk_by_sections
+from boardgame_agent.rag.extractor import chunk_by_sections, enrich_chunks_with_glossary
 
 
 # ── Singletons ────────────────────────────────────────────────────────────────
@@ -277,9 +277,21 @@ def reindex_all() -> None:
 
     for extracted_dir in sorted(games_dir.glob("*/extracted")):
         game_id = extracted_dir.parent.name
+
+        # Load glossary for this game if one exists.
+        glossary_path = extracted_dir.parent / "glossary.json"
+        glossary_entries: list[dict] = []
+        if glossary_path.exists():
+            glossary_data = json.loads(glossary_path.read_text(encoding="utf-8"))
+            glossary_entries = glossary_data.get("entries", [])
+            if glossary_entries:
+                print(f"  {game_id}: enriching with {len(glossary_entries)} glossary entries")
+
         for json_path in sorted(extracted_dir.glob("*.json")):
             pages = json.loads(json_path.read_text(encoding="utf-8"))
             chunks = chunk_by_sections(pages)
+            if glossary_entries:
+                chunks = enrich_chunks_with_glossary(chunks, glossary_entries)
             print(f"  Indexing {game_id}/{json_path.stem} ({len(pages)} pages → {len(chunks)} chunks) …")
             build_index(chunks, client=client)
 

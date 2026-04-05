@@ -49,6 +49,12 @@ class SubmitAnswerInput(BaseModel):
         default=None,
         description="Web sources used. Include url and a one-sentence finding for each.",
     )
+    confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Your confidence in this answer (0-1). Use 1.0 when every claim is cited, lower when you had to infer.",
+    )
 
 
 # ── Merge helper ─────────────────────────────────────────────────────────────
@@ -91,12 +97,13 @@ def make_submit_answer_tool():
         answer: str,
         citations: list[dict] | None = None,
         web_sources: list[dict] | None = None,
+        confidence: float = 1.0,
     ) -> str:
         """Submit your final answer with citations to display in the UI.
 
         Call this tool ONCE when you have gathered enough information to answer
         the user's question. Pass your answer text, document citations with
-        bounding-box indices, and any web sources used.
+        bounding-box indices, any web sources used, and your confidence level.
         """
         raw_citations = [
             c if isinstance(c, dict) else c.model_dump() if hasattr(c, "model_dump") else dict(c)
@@ -113,6 +120,7 @@ def make_submit_answer_tool():
             "answer": answer,
             "citations": merged,
             "web_sources": raw_web,
+            "confidence": max(0.0, min(1.0, confidence)),
         }
         return json.dumps(result)
 

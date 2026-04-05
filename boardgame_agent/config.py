@@ -61,7 +61,31 @@ VLM_PRESETS: dict[str, str] = {
 VLM_DEFAULT_PRESET: str = "qwen"
 
 
-# ── Web Search (Tavily) ───────────────────────────────────────────────────────
+# ── Re-ranking ────────────────────────────────────────────────────────────────
+# Cross-encoder re-ranking after hybrid retrieval.
+# "cohere" uses the Cohere Rerank API (free tier: 1k calls/month).
+# "fastembed" uses a local cross-encoder model via FastEmbed (no API key needed).
+# "none" disables re-ranking (only RRF fusion).
+RERANK_PROVIDER: str = "cohere"  # "cohere" | "fastembed" | "none"
+COHERE_API_KEY: str | None = os.getenv("COHERE_API_KEY")
+COHERE_RERANK_MODEL: str = "rerank-v3.5"
+FASTEMBED_RERANK_MODEL: str = "BAAI/bge-reranker-base"
+
+# ── Glossary (icon/symbol extraction) ────────────────────────────────────────
+# Bbox area thresholds (pts²) for distinguishing icons from illustrations.
+ICON_AREA_MAX: float = 5000.0   # Larger bboxes are likely full illustrations
+ICON_AREA_MIN: float = 100.0    # Smaller bboxes are likely noise
+LEGEND_SCORE_THRESHOLD: float = 0.4  # Pages scoring above this are legends
+ICON_HASH_MATCH_THRESHOLD: int = 5   # DHash hamming distance: confident match
+ICON_HASH_FUZZY_THRESHOLD: int = 8   # DHash hamming distance: fuzzy match
+
+# VLM for glossary building and page vision tool.
+# Can use any vision-capable model from MODEL_OPTIONS, or a Together vision model.
+GLOSSARY_VLM_MODEL: str = "claude-sonnet-4-6"
+PAGE_VISION_MODEL: str = "claude-sonnet-4-6"
+PAGE_VISION_DPI: int = 150
+
+# ── Web Search (Tavily) ──────────────────────────────────────────────────────
 TAVILY_API_KEY: str | None = os.getenv("TAVILY_API_KEY")
 
 # ── Hardware ──────────────────────────────────────────────────────────────────
