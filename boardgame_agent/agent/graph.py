@@ -79,23 +79,27 @@ def build_agent(
     game_id: str,
     game_name: str,
     model_name: str = DEFAULT_MODEL,
-    enable_web_search: bool = True,
 ) -> tuple[Any, Any, QdrantClient, dict]:
     """Compile the LangGraph agent for *game_id*.
 
     Returns (compiled_graph, llm, qdrant_client, agent_config).
-    *agent_config* is a mutable dict — update ``agent_config["top_k"]``
-    before each query so the sidebar slider takes effect without rebuilding.
+    *agent_config* is a mutable dict — update ``agent_config["top_k"]``,
+    ``agent_config["enable_web_search"]``, and
+    ``agent_config["enable_page_vision"]`` before each query so sidebar
+    toggles take effect without rebuilding.
     """
     from boardgame_agent.config import RETRIEVAL_TOP_K
     from boardgame_agent.db.games import get_documents
 
     qdrant_client = get_qdrant_client()
     glossary_exists = _has_glossary(game_id)
-    agent_config: dict = {"top_k": RETRIEVAL_TOP_K}
+    agent_config: dict = {
+        "top_k": RETRIEVAL_TOP_K,
+        "enable_web_search": True,
+        "enable_page_vision": False,
+    }
     tools = make_all_tools(
         game_id, game_name, qdrant_client, agent_config, GAMES_DB_PATH,
-        enable_web_search=enable_web_search,
         enable_glossary=glossary_exists,
     )
 
@@ -113,7 +117,6 @@ def build_agent(
             content=build_system_prompt(
                 game_name,
                 documents=doc_tuples,
-                web_search_enabled=enable_web_search,
                 has_glossary=glossary_exists,
                 plan=plan,
             )

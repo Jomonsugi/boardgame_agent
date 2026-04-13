@@ -35,13 +35,15 @@ st.set_page_config(
 # ── Cached resources ──────────────────────────────────────────────────────────
 
 @st.cache_resource
-def get_agent(game_id: str, game_name: str, model_name: str, enable_web_search: bool):
+def get_agent(game_id: str, game_name: str, model_name: str):
     """Build and cache the LangGraph agent.
 
     Returns (compiled_graph, llm, qdrant_client, agent_config).
-    agent_config is a mutable dict — set agent_config["top_k"] before each query.
+    agent_config is a mutable dict — set top_k, enable_web_search, and
+    enable_page_vision before each query. These take effect without
+    rebuilding the agent or resetting the conversation.
     """
-    return build_agent(game_id, game_name, model_name=model_name, enable_web_search=enable_web_search)
+    return build_agent(game_id, game_name, model_name=model_name)
 
 
 # ── Session state defaults ────────────────────────────────────────────────────
@@ -231,7 +233,7 @@ def main() -> None:
     init_db()
     _init_session()
 
-    game_id, game_name, selected_model, top_k, enable_web_search = render_sidebar()
+    game_id, game_name, selected_model, top_k, enable_web_search, enable_page_vision = render_sidebar()
 
     if game_id is None:
         st.markdown("## Welcome to the Board Game Rules Agent")
@@ -248,25 +250,20 @@ def main() -> None:
         st.session_state.active_doc = None
         st.session_state.current_game_id = game_id
         st.session_state.current_model = selected_model
-        st.session_state.current_web_search = enable_web_search
 
-    # Reset conversation when model or web search setting changes.
+    # Reset conversation when model changes (only model — toggles are live).
     model_changed = selected_model != st.session_state.get("current_model")
-    web_search_changed = enable_web_search != st.session_state.get("current_web_search")
 
-    if model_changed or web_search_changed:
+    if model_changed:
         st.session_state.messages = []
         st.session_state.active_citation = None
         st.session_state.active_doc = None
         st.session_state.session_thread_id = str(uuid.uuid4())
         st.session_state.current_model = selected_model
-        st.session_state.current_web_search = enable_web_search
-        if model_changed:
-            st.toast(f"Switched to {selected_model}")
+        st.toast(f"Switched to {selected_model}")
         st.rerun()
     else:
         st.session_state.current_model = selected_model
-        st.session_state.current_web_search = enable_web_search
 
     # ── Header row: title + layout presets ───────────────────────────────────
     title_col, layout_col = st.columns([3, 1])
@@ -302,9 +299,11 @@ def main() -> None:
 
             # Run agent
             compiled, llm, qdrant_client, agent_config = get_agent(
-                game_id, game_name, selected_model, enable_web_search
+                game_id, game_name, selected_model
             )
             agent_config["top_k"] = top_k
+            agent_config["enable_web_search"] = enable_web_search
+            agent_config["enable_page_vision"] = enable_page_vision
             # Clear tool call cache for each new query
             agent_config.pop("_tool_cache", None)
 

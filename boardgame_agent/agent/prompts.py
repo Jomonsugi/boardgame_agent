@@ -6,17 +6,18 @@ from __future__ import annotations
 def build_system_prompt(
     game_name: str,
     documents: list[tuple[str, str, str | None]] | None = None,
-    web_search_enabled: bool = True,
     has_glossary: bool = False,
     plan: list[str] | None = None,
 ) -> str:
-    """Build the system prompt with dynamic document list and optional web search.
+    """Build the system prompt with dynamic document list.
 
     *has_glossary*: whether a symbol glossary exists for this game.
     *plan*: set to a skip marker by the planner when the answer is already
             in conversation context. Otherwise None.
     """
     # ── Tools section ─────────────────────────────────────────────────────
+    # All tools are always listed. Web search and page vision gate themselves
+    # at call time — if disabled, they return a message telling the agent.
     tools_lines = [
         "- search_rulebook(query, source='all'): search indexed documents. "
         "Pass source='all' to search everything, or a specific tag like "
@@ -34,12 +35,11 @@ def build_system_prompt(
         "understand it from text alone. This helps you know WHAT to search for "
         "next — always follow up with search_rulebook to find citable rules."
     )
-    if web_search_enabled:
-        tools_lines.append(
-            "- search_web(query): search the web for community clarifications, "
-            "FAQs, or edge cases. Use when all indexed documents have been "
-            "exhausted and the answer is still unclear."
-        )
+    tools_lines.append(
+        "- search_web(query): search the web for community clarifications, "
+        "FAQs, or edge cases. Use when all indexed documents have been "
+        "exhausted and the answer is still unclear."
+    )
     tools_lines.append(
         "- get_past_answers(query): check whether a similar question was answered before."
     )
@@ -74,9 +74,7 @@ def build_system_prompt(
         )
 
     # ── Web search guidance ───────────────────────────────────────────────
-    web_search_guidance = ""
-    if web_search_enabled:
-        web_search_guidance = """
+    web_search_guidance = """
 Web search:
 - Use search_web ONLY after exhausting the indexed documents.
 - When using web search, summarize what you found and cite the source URL."""

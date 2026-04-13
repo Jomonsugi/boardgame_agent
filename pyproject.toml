@@ -11,43 +11,36 @@ dependencies = [
     "langchain-together>=0.4.0",
     "langchain-anthropic>=0.3.0",
     "langchain-openai>=0.3.0",
-
     # Agent framework
     "langgraph>=0.4.0",
     "langgraph-checkpoint-sqlite>=2.0.0",
-
     # Tracing
     "langsmith>=0.3.0",
-
     # RAG & vector search
     "qdrant-client>=1.9.0",
     "fastembed>=0.4.0",
     "ollama>=0.4.0",
-
     # Document processing
     "docling>=2.40.0",
     "pymupdf>=1.24.0",
-
     # Re-ranking (Cohere API — free tier; FastEmbed local fallback already included)
     "cohere>=5.0.0",
-
     # Glossary (icon extraction & matching)
     "imagehash>=4.3.0",
     "open-clip-torch>=2.24.0",
-
     # Web search (optional but listed — gate on API key at runtime)
     "tavily-python>=0.5.0",
-
     # UI
     "streamlit>=1.35.0",
     "streamlit-pdf-viewer>=0.0.14",
-
     # Core utilities
     "pydantic>=2.0.0",
     "numpy>=1.26.0",
     "pillow>=10.0.0",
     "python-dotenv>=1.0.0",
     "watchdog>=6.0.0",
+    "mlx>=0.31.1",
+    "mlx-vlm>=0.4.4",
 ]
 
 [dependency-groups]

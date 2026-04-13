@@ -26,6 +26,9 @@ def make_web_search_tool(game_id: str, db_path: Path = GAMES_DB_PATH, config: di
 
         Always include the source URL in your answer when citing web results.
         """
+        if config is not None and not config.get("enable_web_search", True):
+            return "Web search is disabled. Enable it in the sidebar to use this tool."
+
         from tavily import TavilyClient
         from boardgame_agent.db.games import get_search_domains
 

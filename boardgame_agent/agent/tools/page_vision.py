@@ -7,8 +7,12 @@ from langchain_core.tools import tool
 from boardgame_agent.config import DATA_DIR
 
 
-def make_page_vision_tool(game_id: str):
-    """Return a view_page tool bound to *game_id*."""
+def make_page_vision_tool(game_id: str, config: dict | None = None):
+    """Return a view_page tool bound to *game_id*.
+
+    Gated at call time via ``config["enable_page_vision"]`` so it can be
+    toggled mid-conversation without rebuilding the agent.
+    """
 
     @tool
     def view_page(doc_name: str, page_num: int, question: str) -> str:
@@ -25,6 +29,8 @@ def make_page_vision_tool(game_id: str):
             page_num: The page number to view.
             question: What you want to understand about this page.
         """
+        if config is not None and not config.get("enable_page_vision", False):
+            return "Page vision is disabled. Enable it in the sidebar to use this tool."
         from boardgame_agent.config import MODEL_OPTIONS, PAGE_VISION_MODEL
         from boardgame_agent.glossary.builder import _call_vlm
         from boardgame_agent.glossary.image_utils import render_page_for_vlm

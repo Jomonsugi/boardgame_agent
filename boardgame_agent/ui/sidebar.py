@@ -49,10 +49,10 @@ def _game_id_from_name(name: str) -> str:
     return re.sub(r"[^a-z0-9_]", "_", name.strip().lower()).strip("_")
 
 
-def render_sidebar() -> tuple[str | None, str | None, str, int, bool]:
+def render_sidebar() -> tuple[str | None, str | None, str, int, bool, bool]:
     """Render the full sidebar.
 
-    Returns (game_id, game_name, selected_model, top_k, enable_web_search).
+    Returns (game_id, game_name, selected_model, top_k, enable_web_search, enable_page_vision).
     game_id / game_name are None when no game is selected.
     """
     init_db()
@@ -125,7 +125,7 @@ def render_sidebar() -> tuple[str | None, str | None, str, int, bool]:
 
         if selected_game_id is None:
             st.info("Create a game to get started.")
-            return None, None, selected_model, top_k, False
+            return None, None, selected_model, top_k, False, False
 
         st.divider()
 
@@ -237,17 +237,23 @@ def render_sidebar() -> tuple[str | None, str | None, str, int, bool]:
                     conf = entry.get("confidence", 1.0)
                     conf_label = f" ({conf:.0%})" if conf < 1.0 else ""
                     st.markdown(f"**{entry['name']}**{conf_label}: {entry['meaning']}")
-            col_rebuild, col_reindex = st.columns(2)
-            if col_rebuild.button("Rebuild glossary", key="rebuild_glossary"):
+            col_rebuild, col_reindex, col_remove = st.columns(3)
+            if col_rebuild.button("Rebuild", key="rebuild_glossary"):
                 _build_glossary_ui(selected_game_id)
                 _invalidate_agent_cache()
                 st.rerun()
-            if col_reindex.button("Reindex with glossary", key="reindex_glossary",
+            if col_reindex.button("Reindex", key="reindex_glossary",
                                   help="Re-embed all documents with icon meanings injected into chunk text."):
                 with st.spinner("Reindexing documents with glossary enrichment..."):
                     reindex_all()
                 _invalidate_agent_cache()
                 st.success("Reindex complete.")
+                st.rerun()
+            if col_remove.button("Remove", key="remove_glossary",
+                                 help="Delete the glossary. The lookup_glossary tool will no longer be available."):
+                glossary_path.unlink()
+                _invalidate_agent_cache()
+                st.toast("Glossary removed.")
                 st.rerun()
         else:
             st.caption("No glossary built yet.")
@@ -334,38 +340,47 @@ def render_sidebar() -> tuple[str | None, str | None, str, int, bool]:
 
         st.divider()
 
-        # ── Web search (optional) ─────────────────────────────────────────────
+        # ── Agent tools ───────────────────────────────────────────────────────
+        st.subheader("Agent tools")
+
+        enable_page_vision = st.checkbox(
+            "Page vision",
+            value=False,
+            key="enable_page_vision",
+            help="Let the agent visually analyze pages using a VLM. Costs an API call per use. Off by default.",
+        )
+
         enable_web_search = False
         if TAVILY_API_KEY:
             enable_web_search = st.checkbox(
-                "Enable web search",
+                "Web search",
                 value=True,
                 key="enable_web_search",
-                help="Requires a Tavily API key. Lets the agent search the web for community rulings.",
+                help="Let the agent search the web for community rulings. Requires a Tavily API key.",
             )
 
             if enable_web_search:
-                st.subheader("Web search domains")
-                st.caption("Agent searches these sites. Empty = unrestricted.")
+                with st.expander("Web search domains"):
+                    st.caption("Agent searches these sites. Empty = unrestricted.")
 
-                domains = get_search_domains(selected_game_id)
-                for domain in domains:
-                    col1, col2 = st.columns([4, 1])
-                    col1.write(f"🌐 {domain}")
-                    if col2.button("✕", key=f"del_dom_{domain}", help="Remove"):
-                        remove_search_domain(selected_game_id, domain)
+                    domains = get_search_domains(selected_game_id)
+                    for domain in domains:
+                        col1, col2 = st.columns([4, 1])
+                        col1.write(f"🌐 {domain}")
+                        if col2.button("✕", key=f"del_dom_{domain}", help="Remove"):
+                            remove_search_domain(selected_game_id, domain)
+                            st.rerun()
+
+                    new_domain = st.text_input("Add domain", placeholder="example.com", key="new_domain")
+                    col_a, col_b = st.columns(2)
+                    if col_a.button("Add", key="add_domain_btn") and new_domain.strip():
+                        add_search_domain(selected_game_id, new_domain.strip())
+                        st.rerun()
+                    if col_b.button("Clear all", key="clear_domains_btn"):
+                        clear_search_domains(selected_game_id)
                         st.rerun()
 
-                new_domain = st.text_input("Add domain", placeholder="example.com", key="new_domain")
-                col_a, col_b = st.columns(2)
-                if col_a.button("Add", key="add_domain_btn") and new_domain.strip():
-                    add_search_domain(selected_game_id, new_domain.strip())
-                    st.rerun()
-                if col_b.button("Clear all", key="clear_domains_btn"):
-                    clear_search_domains(selected_game_id)
-                    st.rerun()
-
-    return selected_game_id, selected_game_name, selected_model, top_k, enable_web_search
+    return selected_game_id, selected_game_name, selected_model, top_k, enable_web_search, enable_page_vision
 
 
 # ── Document management helpers ───────────────────────────────────────────────

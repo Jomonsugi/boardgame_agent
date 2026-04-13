@@ -30,22 +30,25 @@ def make_all_tools(
     qdrant_client: QdrantClient,
     config: dict[str, Any],
     db_path: Path = GAMES_DB_PATH,
-    enable_web_search: bool = True,
     enable_glossary: bool = False,
 ) -> list[BaseTool]:
     """Return the complete list of tools available to the agent.
 
     Tools are instantiated as closures bound to the current game context so
     every tool call is automatically scoped to the right game.
+
+    Web search and page vision are always registered but gated at call time
+    via ``config["enable_web_search"]`` and ``config["enable_page_vision"]``.
+    This lets the user toggle them mid-conversation without rebuilding the
+    agent or losing chat history.
     """
     tools: list[BaseTool] = [
         make_rag_tool(game_id, qdrant_client, config, db_path=db_path),
         make_history_tool(game_id, db_path),
         make_submit_answer_tool(),
-        make_page_vision_tool(game_id),
+        make_page_vision_tool(game_id, config),
+        make_web_search_tool(game_id, db_path, config=config),
     ]
     if enable_glossary:
         tools.append(make_glossary_tool(game_id))
-    if enable_web_search:
-        tools.append(make_web_search_tool(game_id, db_path, config=config))
     return tools

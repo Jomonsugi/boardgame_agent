@@ -25,7 +25,7 @@ Add these to `.env` for additional features:
 
 | Key | Purpose | Free tier? |
 |-----|---------|------------|
-| `TOGETHER_API_KEY` | Default LLM provider | Yes |
+| `TOGETHER_API_KEY` | Default LLM provider | No |
 | `ANTHROPIC_API_KEY` | Claude models (agent or VLM) | No |
 | `OPENAI_API_KEY` | GPT-4o models | No |
 | `COHERE_API_KEY` | Re-ranking (improves retrieval accuracy) | Yes (1k calls/month) |

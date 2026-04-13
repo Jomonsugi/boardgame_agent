@@ -626,7 +626,7 @@ def build_glossary(
 
     _add_clip_embeddings(entries)
 
-    # Stage 5: Save.
+    # Stage 5: Save (only if we resolved at least one icon).
     glossary = Glossary(
         game_id=game_id,
         built_at=datetime.now(timezone.utc).isoformat(),
@@ -635,14 +635,23 @@ def build_glossary(
     )
 
     save_path = DATA_DIR / "games" / game_id / "glossary.json"
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    save_path.write_text(glossary.model_dump_json(indent=2), encoding="utf-8")
-
-    if on_progress:
-        on_progress(
-            f"Glossary saved: {len(entries)} icons resolved, "
-            f"{len(still_unresolved_list)} unresolved"
-        )
+    if entries:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        save_path.write_text(glossary.model_dump_json(indent=2), encoding="utf-8")
+        if on_progress:
+            on_progress(
+                f"Glossary saved: {len(entries)} icons resolved, "
+                f"{len(still_unresolved_list)} unresolved"
+            )
+    else:
+        # Don't save a useless glossary. Remove stale one if it exists.
+        if save_path.exists():
+            save_path.unlink()
+        if on_progress:
+            on_progress(
+                f"No icons could be resolved ({len(still_unresolved_list)} candidates found "
+                f"but none matched to definitions). Glossary not saved."
+            )
 
     return glossary
 

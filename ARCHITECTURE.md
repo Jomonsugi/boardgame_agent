@@ -110,21 +110,39 @@ chunks ──▶ dense embedding (Ollama) + sparse embedding (SPLADE++)
 
 ```
 query ──▶ embed (dense + sparse)
-      ──▶ Qdrant prefetch (4×k candidates, RRF fusion)
+      ──▶ Qdrant prefetch (4×k = 20 candidates, RRF fusion)
       ──▶ cross-encoder re-ranking (Cohere or local FastEmbed)
-      ──▶ top-k results formatted for LLM with bbox citation indices
+      ──▶ top k = 5 results formatted for LLM with bbox citation indices
 ```
 
-### Re-ranking
+### Two-stage retrieval
 
-**Why re-rank after RRF?** RRF fuses by rank position — it doesn't understand semantics. A cross-encoder scores each candidate against the query using cross-attention, catching subtle distinctions. Example: "Shield spell" vs "shield equipment" — both rank high in RRF, but the cross-encoder correctly ranks the spell higher when the query is about AC bonuses. Research shows 35-40% accuracy improvement from re-ranking (Pinecone benchmarks).
+With `RETRIEVAL_TOP_K = 5`, the pipeline runs in two distinct stages:
 
-**Cohere Rerank** is the default because it's the highest quality and has a free tier (1,000 calls/month). Falls back to local **FastEmbed BGE-reranker-base** when no API key is set.
+**Stage 1 — Fast recall (Qdrant):** Qdrant retrieves **20 candidates** (`k * 4`), not 5. Dense embeddings (semantic) and sparse embeddings (term-based) each return their top 20, and RRF fusion merges the two ranked lists into a single list of 20. RRF is fast and casts a wide net, but it ranks by position in the merged lists, not by semantic relevance.
 
-Qdrant does NOT support cross-encoder re-ranking natively. RRF is a fusion mechanism, not a re-ranker. The cross-encoder runs client-side on Qdrant's output. This is the standard two-stage retrieval pattern.
+**Stage 2 — Precise ranking (cross-encoder):** The cross-encoder scores all 20 candidates against the query using cross-attention — a more accurate measure of relevance than vector similarity. It returns the **top 5 by score**. The other 15 candidates are discarded before the LLM sees anything.
+
+**Re-ranking is filtering, not just reordering.** The cross-encoder narrows 20 candidates to 5 — the LLM never sees the 15 it filtered out. Without this stage we'd be stuck choosing between two bad options:
+- Show the LLM all 20 candidates → wastes context, dilutes answer quality with marginal results
+- Show the LLM Qdrant's top 5 by RRF rank → RRF only knows rank position, not semantics, so it can rank a tangentially related chunk above a directly relevant one
+
+The cross-encoder is too slow to run on the full collection (millions of chunks), but fast enough to score 20 candidates per query. Vector search narrows millions to dozens; cross-encoder narrows dozens to a handful. This is the standard two-stage pattern for production RAG.
+
+**Tunability:** The 4× multiplier is in `retriever.py` (`prefetch_limit = k * 4`). Increasing it (e.g., 10×) lets the cross-encoder consider more candidates, improving recall at the cost of latency. The current 4× is a balanced default.
+
+### Why Qdrant + external cross-encoder
+
+Qdrant does NOT support cross-encoder re-ranking natively. RRF fusion is rank-based math (`1 / (k + rank)`), not semantic scoring. Qdrant handles fast hybrid retrieval; the cross-encoder runs client-side on Qdrant's output. Vector database for scale, cross-encoder for precision.
+
+### Re-ranker choice
+
+**Cohere Rerank** is the default — highest-quality re-ranker available with a free tier (1,000 calls/month). Falls back to local **FastEmbed BGE-reranker-base** (~1GB) when no API key is set.
+
+Cohere returns a `relevance_score` (0-1) per chunk via cross-attention. These scores are currently discarded after re-ordering — they could power a CRAG-style quality gate (see Future considerations).
 
 **Package: `cohere`** — Rerank API (free tier)
-**Package: `fastembed`** — local cross-encoder fallback (BGE-reranker-base, 1GB)
+**Package: `fastembed`** — local cross-encoder fallback (BGE-reranker-base)
 
 ### Formatted output to LLM
 
