@@ -4,7 +4,7 @@
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg) ![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
 
-<!-- TODO: add screenshot here. Suggested shot: chat panel showing an answer with citation chips, alongside the PDF viewer with the cited region highlighted. -->
+![Boardgame agent — chat with citation chips and highlighted PDF](boardgame_agent/docs/images/screenshot.png)
 
 Ask a question, get an answer with clickable citations that highlight the exact source text in the PDF viewer. The agent cross-references multiple documents when needed and keeps digging until it can ground every claim.
 
